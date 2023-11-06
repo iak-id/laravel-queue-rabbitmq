@@ -91,7 +91,7 @@ class RabbitMQQueue extends Queue implements QueueContract
         array $options = []
     ) {
         $this->connection = $connection;
-        $this->channel = $connection->channel();
+        $this->channel = $this->createChannel();
         $this->default = $default;
         $this->options = $options;
     }
@@ -110,7 +110,7 @@ class RabbitMQQueue extends Queue implements QueueContract
         }
 
         // create a temporary channel, so the main channel will not be closed on exception
-        $channel = $this->connection->channel();
+        $channel = $this->createChannel();
         [, $size] = $channel->queue_declare($queue, true);
         $channel->close();
 
@@ -140,7 +140,7 @@ class RabbitMQQueue extends Queue implements QueueContract
 
         [$message, $correlationId] = $this->createMessage($payload, $attempts);
 
-        $this->channel->basic_publish($message, $exchange, $destination, true, false);
+        $this->publishBasic($message, $exchange, $destination, true);
 
         return $correlationId;
     }
@@ -182,8 +182,8 @@ class RabbitMQQueue extends Queue implements QueueContract
 
         [$message, $correlationId] = $this->createMessage($payload, $attempts);
 
-        // Publish directly on the delayQueue, no need to publish trough an exchange.
-        $this->channel->basic_publish($message, null, $destination, true, false);
+        // Publish directly on the delayQueue, no need to publish through an exchange.
+        $this->publishBasic($message, null, $destination, true);
 
         return $correlationId;
     }
@@ -195,11 +195,25 @@ class RabbitMQQueue extends Queue implements QueueContract
      */
     public function bulk($jobs, $data = '', $queue = null): void
     {
-        foreach ((array) $jobs as $job) {
+        try {
+            $this->publishBatch($jobs, $data, $queue);
+        } catch (AMQPConnectionClosedException|AMQPChannelClosedException $exception) {
+            $this->reconnect();
+
+            $this->publishBatch($jobs, $data, $queue);
+        }
+    }
+
+    /**
+     * @throws AMQPProtocolChannelException
+     */
+    protected function publishBatch($jobs, $data = '', $queue = null): void
+    {
+        foreach ($jobs as $job) {
             $this->bulkRaw($this->createPayload($job, $queue, $data), $queue, ['job' => $job]);
         }
 
-        $this->channel->publish_batch();
+        $this->batchPublish();
     }
 
     /**
@@ -249,7 +263,7 @@ class RabbitMQQueue extends Queue implements QueueContract
 
                 // Because of the channel exception the channel was closed and removed.
                 // We have to open a new channel. Because else the worker(s) are stuck in a loop, without processing.
-                $this->channel = $this->connection->channel();
+                $this->channel = $this->getChannel();
 
                 return null;
             }
@@ -261,13 +275,11 @@ class RabbitMQQueue extends Queue implements QueueContract
             // Is has to contain one of the several phrases in exception message in order to restart worker
             // Otherwise worker continues to work with broken connection
 
-            $this->reconnect();
-
-//            throw new AMQPRuntimeException(
-//                'Lost connection: '.$exception->getMessage(),
-//                $exception->getCode(),
-//                $exception
-//            );
+            throw new AMQPRuntimeException(
+                'Lost connection: '.$exception->getMessage(),
+                $exception->getCode(),
+                $exception
+            );
         }
 
         return null;
@@ -285,13 +297,40 @@ class RabbitMQQueue extends Queue implements QueueContract
         return $this->connection;
     }
 
+    protected function publishBasic($msg, $exchange = '', $destination = '', $mandatory = false, $immediate = false, $ticket = null): void
+    {
+        try {
+            $this->getChannel()->basic_publish($msg, $exchange, $destination, $mandatory, $immediate, $ticket);
+        } catch (AMQPConnectionClosedException|AMQPChannelClosedException $exception) {
+            $this->reconnect();
+
+            $this->getChannel()->basic_publish($msg, $exchange, $destination, $mandatory, $immediate, $ticket);
+        }
+    }
+
+    protected function batchPublish(): void
+    {
+        $this->getChannel()->publish_batch();
+    }
+
     public function getChannel($forceNew = false): AMQPChannel
     {
         if (! $this->channel || $forceNew) {
-            $this->channel = $this->getConnection()->channel();
+            $this->channel = $this->createChannel();
         }
 
         return $this->channel;
+    }
+
+    protected function createChannel(): AMQPChannel
+    {
+        try {
+            return $this->getConnection()->channel();
+        } catch (AMQPConnectionClosedException $exception) {
+            $this->reconnect();
+
+            return $this->getConnection()->channel();
+        }
     }
 
     protected function reconnect()
@@ -323,7 +362,7 @@ class RabbitMQQueue extends Queue implements QueueContract
     {
         try {
             // create a temporary channel, so the main channel will not be closed on exception
-            $channel = $this->connection->channel();
+            $channel = $this->createChannel();
             $channel->exchange_declare($exchange, '', true);
             $channel->close();
 
@@ -397,7 +436,7 @@ class RabbitMQQueue extends Queue implements QueueContract
     {
         try {
             // create a temporary channel, so the main channel will not be closed on exception
-            $channel = $this->connection->channel();
+            $channel = $this->createChannel();
             $channel->queue_declare($this->getQueue($name), true);
             $channel->close();
 
@@ -485,7 +524,7 @@ class RabbitMQQueue extends Queue implements QueueContract
     public function purge(string $queue = null): void
     {
         // create a temporary channel, so the main channel will not be closed on exception
-        $channel = $this->connection->channel();
+        $channel = $this->createChannel();
         $channel->queue_purge($this->getQueue($queue));
         $channel->close();
     }
