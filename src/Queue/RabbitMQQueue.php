@@ -261,13 +261,13 @@ class RabbitMQQueue extends Queue implements QueueContract
             // Is has to contain one of the several phrases in exception message in order to restart worker
             // Otherwise worker continues to work with broken connection
 
-//            $this->reconnect();
+            $this->reconnect();
 
-            throw new AMQPRuntimeException(
-                'Lost connection: '.$exception->getMessage(),
-                $exception->getCode(),
-                $exception
-            );
+//            throw new AMQPRuntimeException(
+//                'Lost connection: '.$exception->getMessage(),
+//                $exception->getCode(),
+//                $exception
+//            );
         }
 
         return null;
