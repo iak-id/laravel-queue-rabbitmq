@@ -19,6 +19,7 @@ use PhpAmqpLib\Exception\AMQPRuntimeException;
 use PhpAmqpLib\Exchange\AMQPExchangeType;
 use PhpAmqpLib\Message\AMQPMessage;
 use PhpAmqpLib\Wire\AMQPTable;
+use RuntimeException;
 use VladimirYuldashev\LaravelQueueRabbitMQ\Queue\Jobs\RabbitMQJob;
 
 class RabbitMQQueue extends Queue implements QueueContract
@@ -260,8 +261,10 @@ class RabbitMQQueue extends Queue implements QueueContract
             // Is has to contain one of the several phrases in exception message in order to restart worker
             // Otherwise worker continues to work with broken connection
 
+//            $this->reconnect();
+
             throw new AMQPRuntimeException(
-                'Lost connection: ' . $exception->getMessage(),
+                'Lost connection: '.$exception->getMessage(),
                 $exception->getCode(),
                 $exception
             );
@@ -275,15 +278,26 @@ class RabbitMQQueue extends Queue implements QueueContract
      */
     public function getConnection(): AbstractConnection
     {
+        if (! $this->connection) {
+            throw new RuntimeException('Queue has no AMQPConnection set.');
+        }
+
         return $this->connection;
     }
 
-    /**
-     * @return AMQPChannel
-     */
-    public function getChannel(): AMQPChannel
+    public function getChannel($forceNew = false): AMQPChannel
     {
+        if (! $this->channel || $forceNew) {
+            $this->channel = $this->getConnection()->channel();
+        }
+
         return $this->channel;
+    }
+
+    protected function reconnect()
+    {
+        $this->getConnection()->reconnect();
+        $this->getChannel(true);
     }
 
     /**
