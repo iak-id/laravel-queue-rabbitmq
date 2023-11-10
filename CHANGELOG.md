@@ -1,6 +1,6 @@
 # CHANGELOG
 
-> Current Version: **1.0**
+> Current Version: **1.1**
 
 ## Releases
 
@@ -8,3 +8,8 @@
 
 **Improvement**
 - Implement reconnect connection because get error 'Broken Pipe'
+
+### v1.1 - 10 November 2023
+
+**Improvement**
+- Delete github action
